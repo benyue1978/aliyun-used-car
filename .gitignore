@@ -1,0 +1,33 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+env/
+venv/
+ENV/
+
+# Jupyter and IPython
+.ipynb_checkpoints
+
+# VSCode
+.vscode/
+
+# Data and model outputs
+*.csv
+*.log
+*.dat
+*.pth
+*.h5
+*.ckpt
+
+# User data and results
+user_data/
+prediction_result/
+model/
+
+# OS files
+.DS_Store
+Thumbs.db
