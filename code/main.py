@@ -2,160 +2,113 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import mean_absolute_error
+import time
+import gc
 from feature.generation import FeatureGenerator
+from sklearn.model_selection import train_test_split
+import xgboost as xgb
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# Set device
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Set device (for future deep learning use, not used here)
+# DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Data paths
-train_path = os.path.join('data', 'used_car_train_20200313.csv')
-testA_path = os.path.join('data', 'used_car_testA_20200313.csv')
-testB_path = os.path.join('data', 'used_car_testB_20200421.csv')
+def log(msg):
+    print(f"[LOG][{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
-# Features (will be generated automatically)
-# CATEGORICAL_FEATURES, NUMERICAL_FEATURES are defined in feature/generation.py
+def timeit(msg):
+    class Timer:
+        def __enter__(self):
+            self.start = time.time()
+            log(f"[START] {msg}")
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            elapsed = time.time() - self.start
+            log(f"[END] {msg} | Time elapsed: {elapsed:.2f}s")
+    return Timer()
 
-# Data loading with auto separator and missing value handling
-def load_data(path, is_train=True):
-    try:
-        df = pd.read_csv(path, na_values=['-'])
-        if len(df.columns) == 1:
-            raise ValueError('Single column detected, try whitespace separator')
-    except Exception:
-        try:
-            df = pd.read_csv(path, delim_whitespace=True, na_values=['-'])
-            if len(df.columns) == 1:
-                raise ValueError('Single column detected, try tab separator')
-        except Exception:
-            df = pd.read_csv(path, sep='\t', na_values=['-'])
-    df.columns = df.columns.str.strip()
-    print(f"[DEBUG] Columns in {path}: {df.columns.tolist()}")
-    return df
-
-class CarDataset(Dataset):
-    def __init__(self, X, y=None):
-        self.X = torch.tensor(X)
-        self.y = torch.tensor(y) if y is not None else None
-    def __len__(self):
-        return len(self.X)
-    def __getitem__(self, idx):
-        if self.y is not None:
-            return self.X[idx], self.y[idx]
-        else:
-            return self.X[idx]
-
-class MLP(nn.Module):
-    def __init__(self, input_dim):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1)
-        )
-    def forward(self, x):
-        return self.model(x).squeeze(1)
-
-def train_model(model, train_loader, epochs=10, lr=1e-3):
-    model.train()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.L1Loss()
-    for epoch in range(epochs):
-        total_loss = 0
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(DEVICE), y_batch.to(DEVICE)
-            optimizer.zero_grad()
-            output = model(X_batch)
-            loss = criterion(output, y_batch)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item() * X_batch.size(0)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader.dataset):.4f}")
-
-def predict(model, test_loader):
-    model.eval()
+def batch_predict(model, X, batch_size=5000):
     preds = []
-    with torch.no_grad():
-        for X_batch in test_loader:
-            X_batch = X_batch.to(DEVICE)
-            output = model(X_batch)
-            preds.append(output.cpu().numpy())
+    for i in range(0, X.shape[0], batch_size):
+        preds.append(model.predict(X[i:i+batch_size]))
     return np.concatenate(preds)
 
-def save_submission(sale_ids, preds, out_path):
-    df = pd.DataFrame({'SaleID': sale_ids, 'price': preds.astype(int)})
-    df.to_csv(out_path, index=False)
-
 if __name__ == '__main__':
-    # Load raw data
-    train_df = load_data(train_path, is_train=True)
-    testA_df = load_data(testA_path, is_train=False)
-    testB_df = load_data(testB_path, is_train=False)
+    with timeit('Loading data'):
+        train_path = '../data/used_car_train_20200313.csv' if not os.path.exists('data/used_car_train_20200313.csv') else 'data/used_car_train_20200313.csv'
+        testA_path = '../data/used_car_testA_20200313.csv' if not os.path.exists('data/used_car_testA_20200313.csv') else 'data/used_car_testA_20200313.csv'
+        testB_path = '../data/used_car_testB_20200421.csv' if not os.path.exists('data/used_car_testB_20200421.csv') else 'data/used_car_testB_20200421.csv'
+        df = pd.read_csv(train_path, delim_whitespace=True, na_values=['-'])
+        testA_df = pd.read_csv(testA_path, delim_whitespace=True, na_values=['-'])
+        testB_df = pd.read_csv(testB_path, delim_whitespace=True, na_values=['-'])
+        log(f'Train shape: {df.shape}, TestA shape: {testA_df.shape}, TestB shape: {testB_df.shape}')
 
-    # Feature engineering
+    with timeit('Splitting train/val set'):
+        train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
+        log(f'Train split (80%): {train_df.shape}, Test split (20%): {val_df.shape}')
+    train_df = train_df[train_df['price'].notna() & (train_df['price'] >= 0)].reset_index(drop=True)
+    val_df = val_df[val_df['price'].notna() & (val_df['price'] >= 0)].reset_index(drop=True)
+    del df; gc.collect()
+
     fg = FeatureGenerator()
-    fg.fit(train_df)
-    train_df = fg.transform(train_df)
-    testA_df = fg.transform(testA_df)
-    testB_df = fg.transform(testB_df)
+    with timeit('Fitting feature generator'):
+        fg.fit(train_df)
+    with timeit('Transforming train/val/testA/testB'):
+        train_df = fg.transform(train_df)
+        val_df = fg.transform(val_df)
+        testA_df = fg.transform(testA_df)
+        testB_df = fg.transform(testB_df)
+    log('Feature engineering done.')
+    gc.collect()
 
-    # Select all scaled numerical features and new features for modeling
-    feature_cols = [col for col in train_df.columns if col.endswith('_scaled') or col in ['kilometer_bin'] + ['car_age']]
-    X_train = train_df[feature_cols].values.astype(np.float32)
-    y_train = train_df['price'].values.astype(np.float32)
-    X_testA = testA_df[feature_cols].values.astype(np.float32)
-    X_testB = testB_df[feature_cols].values.astype(np.float32)
+    # Use all features except price and SaleID
+    exclude_cols = ['price', 'SaleID']
+    feature_cols = [col for col in train_df.columns if col not in exclude_cols]
+    X_train = train_df[feature_cols].values
+    y_train = np.log1p(train_df['price'].values)
+    X_val = val_df[feature_cols].values
+    y_val = np.log1p(val_df['price'].values)
+    del train_df; del val_df; gc.collect()
 
-    # Prepare dataset
-    train_dataset = CarDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
+    with timeit('Training XGBoost'):
+        xgb_model = xgb.XGBRegressor(
+            n_estimators=600,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            min_child_weight=3,
+            reg_lambda=0.5,
+            max_depth=8,
+            tree_method='hist',
+            eval_metric='mae'
+        )
+        xgb_model.fit(X_train, y_train)
+    os.makedirs('model', exist_ok=True)
+    xgb_model.save_model('model/xgb_model.json')
+    log('XGBoost model saved to model/xgb_model.json')
 
-    # Define model
-    model = MLP(input_dim=len(feature_cols)).to(DEVICE)
+    with timeit('Evaluating on validation set'):
+        val_pred_xgb = xgb_model.predict(X_val)
+        val_pred_xgb = np.expm1(val_pred_xgb)
+        val_pred_xgb = np.clip(val_pred_xgb, 0, None)
+        y_val_true = np.expm1(y_val)
+        mse_xgb = mean_squared_error(y_val_true, val_pred_xgb)
+        mae_xgb = mean_absolute_error(y_val_true, val_pred_xgb)
+        log(f'XGBoost val MSE: {mse_xgb:.4f}')
+        log(f'XGBoost val MAE: {mae_xgb:.4f}')
+        log('Sample validation predictions (XGBoost):')
+        print(pd.DataFrame({'true': y_val_true[:10], 'pred': val_pred_xgb[:10]}))
+    del X_train; del y_train; del X_val; del y_val; gc.collect()
 
-    # Train
-    train_model(model, train_loader, epochs=10, lr=1e-3)
-
-    # Save model
-    torch.save(model.state_dict(), os.path.join('model', 'mlp.pth'))
-
-    # Predict testA
-    saleidA = testA_df['SaleID']
-    testA_dataset = CarDataset(X_testA)
-    testA_loader = DataLoader(testA_dataset, batch_size=256, shuffle=False)
-    predsA = predict(model, testA_loader)
-    save_submission(saleidA, predsA, os.path.join('prediction_result', 'predictions.csv'))
-
-    # Calculate MAE for testA if ground truth exists
-    testA_label_path = os.path.join('data', 'used_car_testA_20200313_label.csv')
-    if os.path.exists(testA_label_path):
-        testA_label_df = pd.read_csv(testA_label_path)
-        y_true_A = testA_label_df['price'].values
-        mae_A = mean_absolute_error(y_true_A, predsA)
-        print(f"TestA MAE: {mae_A:.4f}")
-    else:
-        print("TestA ground truth not found, skip MAE calculation.")
-
-    # Predict testB
-    saleidB = testB_df['SaleID']
-    testB_dataset = CarDataset(X_testB)
-    testB_loader = DataLoader(testB_dataset, batch_size=256, shuffle=False)
-    predsB = predict(model, testB_loader)
-    save_submission(saleidB, predsB, os.path.join('prediction_result', 'predictions_B.csv'))
-
-    # Calculate MAE for testB if ground truth exists
-    testB_label_path = os.path.join('data', 'used_car_testB_20200421_label.csv')
-    if os.path.exists(testB_label_path):
-        testB_label_df = pd.read_csv(testB_label_path)
-        y_true_B = testB_label_df['price'].values
-        mae_B = mean_absolute_error(y_true_B, predsB)
-        print(f"TestB MAE: {mae_B:.4f}")
-    else:
-        print("TestB ground truth not found, skip MAE calculation.")
-
-    print('All predictions finished!')
+    with timeit('Predicting TestA and TestB'):
+        X_testA = testA_df[feature_cols].values
+        X_testB = testB_df[feature_cols].values
+        predA = batch_predict(xgb_model, X_testA)
+        predB = batch_predict(xgb_model, X_testB)
+        predA = np.expm1(predA)
+        predB = np.expm1(predB)
+        predA = np.clip(predA, 0, None)
+        predB = np.clip(predB, 0, None)
+    outA = pd.DataFrame({'SaleID': testA_df['SaleID'], 'price': predA})
+    outB = pd.DataFrame({'SaleID': testB_df['SaleID'], 'price': predB})
+    outA.to_csv('prediction_result/predictions_A.csv', index=False)
+    outB.to_csv('prediction_result/predictions.csv', index=False)
+    log('All predictions finished!')
