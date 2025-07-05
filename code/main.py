@@ -89,9 +89,9 @@ if __name__ == '__main__':
     xgb_params = {
         'objective': 'reg:squarederror',
         'eval_metric': 'mae',
-        'n_estimators': 20000, # Increased estimators for manual early stopping
-        'learning_rate': 0.02,
-        'max_depth': 8,
+        'n_estimators': 50000, # Increased estimators for manual early stopping
+        'learning_rate': 0.01,
+        'max_depth': 10,
         'subsample': 0.7,
         'colsample_bytree': 0.7,
         'min_child_weight': 1,
