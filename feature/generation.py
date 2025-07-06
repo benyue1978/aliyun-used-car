@@ -68,6 +68,11 @@ class FeatureGenerator:
         self.name_counts = df['name'].value_counts().to_dict()
         df['name_count'] = df['name'].map(self.name_counts)
 
+        # Interaction features
+        df['power_x_kilometer'] = df['power'] * df['kilometer']
+        df['car_age_x_kilometer'] = df['car_age'] * df['kilometer']
+        df['power_x_car_age'] = df['power'] * df['car_age']
+
         # === Part 2: Fit encoders and statistical mappings ===
         self.global_price_mean = df['price'].mean()
         
@@ -120,6 +125,11 @@ class FeatureGenerator:
         df['car_age'] = (creat_year - reg_year).clip(lower=0)
         df['creatDate_month'] = extract_month(df['creatDate'])
         df['name_count'] = df['name'].map(self.name_counts).fillna(0)
+
+        # Interaction features
+        df['power_x_kilometer'] = df['power'] * df['kilometer']
+        df['car_age_x_kilometer'] = df['car_age'] * df['kilometer']
+        df['power_x_car_age'] = df['power'] * df['car_age']
 
         # === Part 2: Apply pre-computed mappings ===
         fill_value = df['price'].mean() if 'price' in df.columns else self.global_price_mean

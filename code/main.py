@@ -5,6 +5,7 @@ import numpy as np
 import time
 import gc
 import io
+import joblib # Import joblib
 from feature.generation import FeatureGenerator
 from sklearn.model_selection import train_test_split
 import xgboost as xgb
@@ -33,7 +34,8 @@ def read_csv_correctly(path):
     data_io = io.StringIO(csv_content)
     df = pd.read_csv(data_io, sep=',', na_values=['-'])
     df.columns = header
-    df = df.iloc[1:].reset_index(drop=True)
+    # Removed df.iloc[1:] to ensure all rows are read
+    df = df.reset_index(drop=True)
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
@@ -50,8 +52,6 @@ if __name__ == '__main__':
         # Drop useless columns early
         df.drop(['seller', 'offerType'], axis=1, inplace=True)
         testB_df.drop(['seller', 'offerType'], axis=1, inplace=True)
-
-    
 
     df = df[df['price'].notna() & (df['price'] >= 0)].reset_index(drop=True)
 
@@ -71,7 +71,8 @@ if __name__ == '__main__':
     # Define feature columns to use for training
     feature_cols = [col for col in df_train_subset.columns if col not in 
                     ['SaleID', 'price', 'name', 'regDate', 'creatDate', 
-                     'notRepairedDamage', 'bodyType', 'fuelType', 'gearbox']]
+                     'notRepairedDamage', 'bodyType', 'fuelType', 'gearbox',
+                     'power_x_kilometer', 'car_age_x_kilometer', 'power_x_car_age']]
     
     log(f'\nUsing {len(feature_cols)} feature columns for training.')
 
@@ -89,11 +90,11 @@ if __name__ == '__main__':
     xgb_params = {
         'objective': 'reg:squarederror',
         'eval_metric': 'mae',
-        'n_estimators': 50000, # Increased estimators for manual early stopping
-        'learning_rate': 0.01,
-        'max_depth': 10,
-        'subsample': 0.7,
-        'colsample_bytree': 0.7,
+        'n_estimators': 100000, # Further increased estimators
+        'learning_rate': 0.01, # Reduced learning rate
+        'max_depth': 8, # Increased max_depth
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
         'min_child_weight': 1,
         'seed': 42,
         'n_jobs': -1
@@ -107,7 +108,7 @@ if __name__ == '__main__':
         num_boost_round=xgb_params['n_estimators'],
         evals=[(dval, 'validation_0')],
         early_stopping_rounds=100,
-        verbose_eval=True
+        verbose_eval=False
     )
 
     best_iteration = bst.best_iteration
@@ -123,8 +124,53 @@ if __name__ == '__main__':
 
     # Create submission file if needed
     testB_preds_xgb = bst.predict(dtestB, iteration_range=(0, best_iteration))
-    predB = np.expm1(testB_preds_xgb)
-    predB = np.clip(predB, 0, None)
-    outB = pd.DataFrame({'SaleID': testB_df['SaleID'], 'price': predB})
-    outB.to_csv('prediction_result/predictions_xgb.csv', index=False)
+
+    import lightgbm as lgb
+
+    # LightGBM parameters
+    lgb_params = {
+        'objective': 'regression_l1', # MAE objective
+        'metric': 'mae',
+        'n_estimators': 100000, # Increased estimators for manual early stopping
+        'learning_rate': 0.01,
+        'num_leaves': 64,
+        'max_depth': 8,
+        'min_child_samples': 20,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'seed': 42,
+        'n_jobs': -1,
+        'verbose': -1, # Suppress verbose output
+    }
+
+    log('\n--- Training LightGBM Model with Early Stopping ---')
+
+    lgb_model = lgb.LGBMRegressor(**lgb_params)
+    lgb_model.fit(X_train, y_train,
+                  eval_set=[(X_val, y_val)],
+                  eval_metric='mae',
+                  callbacks=[lgb.early_stopping(100, verbose=False)])
+
+    val_preds_lgb_log_scale = lgb_model.predict(X_val)
+    testB_preds_lgb_log_scale = lgb_model.predict(X_testB)
+
+    # Blending predictions on validation set
+    val_preds_blended_log_scale = 0.7 * val_preds_log_scale + 0.3 * val_preds_lgb_log_scale
+    val_preds_blended_original_scale = np.expm1(val_preds_blended_log_scale)
+    mae_blended_original_scale = mean_absolute_error(y_val_original_scale, val_preds_blended_original_scale)
+    log(f'Final Blended Validation MAE (Original Scale): {mae_blended_original_scale:.2f}')
+
+    # Blending predictions for testB
+    blend_preds = 0.7 * np.expm1(testB_preds_xgb) + 0.3 * np.expm1(testB_preds_lgb_log_scale)
+    blend_preds = np.clip(blend_preds, 0, None)
+
+    outB = pd.DataFrame({'SaleID': testB_df['SaleID'], 'price': blend_preds})
+    outB.to_csv('prediction_result/predictions_blended.csv', index=False)
     log('All predictions finished!')
+
+    # Save models
+    model_dir = 'model'
+    os.makedirs(model_dir, exist_ok=True)
+    joblib.dump(bst, os.path.join(model_dir, 'xgboost_model.pkl'))
+    joblib.dump(lgb_model, os.path.join(model_dir, 'lightgbm_model.pkl'))
+    log(f'Models saved to {model_dir} directory.')
