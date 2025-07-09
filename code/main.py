@@ -155,13 +155,13 @@ if __name__ == '__main__':
     testB_preds_lgb_log_scale = lgb_model.predict(X_testB)
 
     # Blending predictions on validation set
-    val_preds_blended_log_scale = 0.7 * val_preds_log_scale + 0.3 * val_preds_lgb_log_scale
+    val_preds_blended_log_scale = 0.5 * val_preds_log_scale + 0.5 * val_preds_lgb_log_scale
     val_preds_blended_original_scale = np.expm1(val_preds_blended_log_scale)
     mae_blended_original_scale = mean_absolute_error(y_val_original_scale, val_preds_blended_original_scale)
     log(f'Final Blended Validation MAE (Original Scale): {mae_blended_original_scale:.2f}')
 
     # Blending predictions for testB
-    blend_preds = 0.7 * np.expm1(testB_preds_xgb) + 0.3 * np.expm1(testB_preds_lgb_log_scale)
+    blend_preds = 0.5 * np.expm1(testB_preds_xgb) + 0.5 * np.expm1(testB_preds_lgb_log_scale)
     blend_preds = np.clip(blend_preds, 0, None)
 
     outB = pd.DataFrame({'SaleID': testB_df['SaleID'], 'price': blend_preds})
