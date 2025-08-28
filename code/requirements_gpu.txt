@@ -1,0 +1,17 @@
+# GPU-accelerated version of requirements
+# Core dependencies
+pandas
+scikit-learn
+joblib
+
+# GPU acceleration libraries
+torch>=2.0.0  # CUDA support
+xgboost>=2.0.0  # GPU support
+lightgbm>=4.0.0  # GPU support
+
+# Optional: OpenCL support for broader GPU compatibility
+pyopencl  # Uncomment if you need OpenCL support
+
+# Optional: Additional GPU utilities
+# cupy-cuda12x  # CUDA array operations (uncomment for your CUDA version)
+# numba  # JIT compilation with GPU support

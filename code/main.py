@@ -86,7 +86,69 @@ if __name__ == '__main__':
     dval = DMatrix(X_val, label=y_val)
     dtestB = DMatrix(X_testB)
 
-    # XGBoost parameters (can be tuned later)
+    # GPU detection and configuration
+    def detect_gpu():
+        """Detect available GPU devices and return configuration"""
+        gpu_info = {'has_gpu': False, 'device': 'cpu', 'gpu_count': 0, 'gpu_type': 'none'}
+        
+        # Try CUDA detection first (for XGBoost and PyTorch)
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_count = torch.cuda.device_count()
+                gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else 'Unknown'
+                log(f'CUDA GPU detected: {gpu_count} device(s) - {gpu_name}')
+                gpu_info.update({
+                    'has_gpu': True, 
+                    'gpu_count': gpu_count, 
+                    'device': 'gpu',
+                    'gpu_type': 'cuda'
+                })
+                return gpu_info
+        except ImportError:
+            log('PyTorch not available for CUDA detection')
+        
+        # Try XGBoost CUDA detection as fallback
+        try:
+            import xgboost as xgb
+            # Check if XGBoost was compiled with CUDA support
+            if hasattr(xgb, 'get_config') and 'use_cuda' in xgb.get_config():
+                log('XGBoost CUDA support detected')
+                gpu_info.update({
+                    'has_gpu': True,
+                    'gpu_count': 1,
+                    'device': 'gpu',
+                    'gpu_type': 'cuda'
+                })
+                return gpu_info
+        except Exception:
+            pass
+        
+        # Try OpenCL detection
+        try:
+            import pyopencl as cl
+            platforms = cl.get_platforms()
+            if platforms:
+                for platform in platforms:
+                    devices = platform.get_devices(cl.device_type.GPU)
+                    if devices:
+                        log(f'OpenCL GPU detected: {len(devices)} device(s) on platform {platform.name}')
+                        gpu_info.update({
+                            'has_gpu': True,
+                            'gpu_count': len(devices),
+                            'device': 'gpu',
+                            'gpu_type': 'opencl'
+                        })
+                        return gpu_info
+        except ImportError:
+            log('PyOpenCL not available for OpenCL detection')
+        
+        log('No GPU detected, using CPU mode')
+        return gpu_info
+    
+    gpu_config = detect_gpu()
+    
+    # XGBoost parameters with GPU support
     xgb_params = {
         'objective': 'reg:squarederror',
         'eval_metric': 'mae',
@@ -99,6 +161,21 @@ if __name__ == '__main__':
         'seed': 42,
         'n_jobs': -1
     }
+    
+    # Enable GPU acceleration for XGBoost if available
+    if gpu_config['has_gpu']:
+        xgb_params.update({
+            'tree_method': 'hist',  # Use hist method with device parameter
+            'device': 'cuda',       # New XGBoost 2.0+ GPU parameter
+            'predictor': 'gpu_predictor'
+        })
+        log('XGBoost GPU acceleration enabled (CUDA)')
+    else:
+        xgb_params.update({
+            'tree_method': 'hist',
+            'device': 'cpu'
+        })
+        log('XGBoost using CPU mode')
 
     log('\n--- Training XGBoost Model with Early Stopping ---')
 
@@ -127,7 +204,7 @@ if __name__ == '__main__':
 
     import lightgbm as lgb
 
-    # LightGBM parameters
+    # LightGBM parameters with GPU support
     lgb_params = {
         'objective': 'regression_l1', # MAE objective
         'metric': 'mae',
@@ -142,6 +219,22 @@ if __name__ == '__main__':
         'n_jobs': -1,
         'verbose': -1, # Suppress verbose output
     }
+    
+    # Enable GPU acceleration for LightGBM if available
+    if gpu_config['has_gpu']:
+        lgb_params.update({
+            'device': 'gpu',
+            'gpu_platform_id': 0,
+            'gpu_device_id': 0,
+            'force_row_wise': True,  # Better performance on GPU
+        })
+        log('LightGBM GPU acceleration enabled')
+    else:
+        lgb_params.update({
+            'device': 'cpu',
+            'force_col_wise': True,  # Better performance on CPU
+        })
+        log('LightGBM using CPU mode')
 
     log('\n--- Training LightGBM Model with Early Stopping ---')
 
