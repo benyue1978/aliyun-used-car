@@ -173,38 +173,21 @@ if __name__ == '__main__':
     
     # Enable GPU acceleration for LightGBM if available
     if gpu_config['has_gpu']:
-        # LightGBM uses OpenCL, not CUDA directly
-        # For NVIDIA GPU, we need OpenCL runtime
+        # LightGBM uses OpenCL, and we confirmed it's working
         try:
             import pyopencl as cl
             platforms = cl.get_platforms()
-            nvidia_platform = None
-            for platform in platforms:
-                if 'nvidia' in platform.name.lower():
-                    nvidia_platform = platform
-                    break
-            
-            if nvidia_platform:
-                devices = nvidia_platform.get_devices(cl.device_type.GPU)
-                if devices:
-                    lgb_params.update({
-                        'device': 'gpu',
-                        'gpu_platform_id': platforms.index(nvidia_platform),
-                        'gpu_device_id': 0
-                    })
-                    log('LightGBM GPU acceleration enabled (NVIDIA OpenCL)')
-                else:
-                    log('LightGBM: NVIDIA GPU found but no OpenCL devices available')
-                    log('LightGBM: Using CPU mode (GPU requires OpenCL runtime)')
-            else:
-                log('LightGBM: No NVIDIA OpenCL platform found')
-                log('LightGBM: Using CPU mode (GPU requires OpenCL runtime)')
-        except ImportError:
-            log('LightGBM: PyOpenCL not available')
-            log('LightGBM: Using CPU mode (GPU requires OpenCL runtime)')
+            # Find NVIDIA platform
+            nvidia_platform_id = 0  # Based on your test, it's platform 0
+            lgb_params.update({
+                'device': 'gpu',
+                'gpu_platform_id': nvidia_platform_id,
+                'gpu_device_id': 0
+            })
+            log('LightGBM GPU acceleration enabled (NVIDIA OpenCL)')
         except Exception as e:
-            log(f'LightGBM: OpenCL detection failed: {e}')
-            log('LightGBM: Using CPU mode (GPU requires OpenCL runtime)')
+            log(f'LightGBM: OpenCL configuration failed: {e}')
+            log('LightGBM: Using CPU mode')
     else:
         log('LightGBM using CPU mode')
 
