@@ -127,19 +127,22 @@ if __name__ == '__main__':
         # Try OpenCL detection
         try:
             import pyopencl as cl
-            platforms = cl.get_platforms()
-            if platforms:
-                for platform in platforms:
-                    devices = platform.get_devices(cl.device_type.GPU)
-                    if devices:
-                        log(f'OpenCL GPU detected: {len(devices)} device(s) on platform {platform.name}')
-                        gpu_info.update({
-                            'has_gpu': True,
-                            'gpu_count': len(devices),
-                            'device': 'gpu',
-                            'gpu_type': 'opencl'
-                        })
-                        return gpu_info
+            try:
+                platforms = cl.get_platforms()
+                if platforms:
+                    for platform in platforms:
+                        devices = platform.get_devices(cl.device_type.GPU)
+                        if devices:
+                            log(f'OpenCL GPU detected: {len(devices)} device(s) on platform {platform.name}')
+                            gpu_info.update({
+                                'has_gpu': True,
+                                'gpu_count': len(devices),
+                                'device': 'gpu',
+                                'gpu_type': 'opencl'
+                            })
+                            return gpu_info
+            except Exception as e:
+                log(f'OpenCL detection failed: {e} (this is normal on some systems)')
         except ImportError:
             log('PyOpenCL not available for OpenCL detection')
         
@@ -158,6 +161,8 @@ if __name__ == '__main__':
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'min_child_weight': 1,
+        'reg_alpha': 0.1,  # L1 regularization
+        'reg_lambda': 1.0, # L2 regularization
         'seed': 42,
         'n_jobs': -1
     }
@@ -167,9 +172,11 @@ if __name__ == '__main__':
         xgb_params.update({
             'tree_method': 'hist',  # Use hist method with device parameter
             'device': 'cuda',       # New XGBoost 2.0+ GPU parameter
-            'predictor': 'gpu_predictor'
+            'predictor': 'gpu_predictor',
+            'max_bin': 256,         # Optimized for NVIDIA A10 memory
+            'grow_policy': 'lossguide'  # Better for GPU training
         })
-        log('XGBoost GPU acceleration enabled (CUDA)')
+        log('XGBoost GPU acceleration enabled (CUDA) - Optimized for NVIDIA A10')
     else:
         xgb_params.update({
             'tree_method': 'hist',
@@ -215,6 +222,8 @@ if __name__ == '__main__':
         'min_child_samples': 20,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
+        'reg_alpha': 0.1,  # L1 regularization
+        'reg_lambda': 1.0, # L2 regularization
         'seed': 42,
         'n_jobs': -1,
         'verbose': -1, # Suppress verbose output
@@ -227,8 +236,9 @@ if __name__ == '__main__':
             'gpu_platform_id': 0,
             'gpu_device_id': 0,
             'force_row_wise': True,  # Better performance on GPU
+            'max_bin': 255,          # Optimized for NVIDIA A10 memory
         })
-        log('LightGBM GPU acceleration enabled')
+        log('LightGBM GPU acceleration enabled - Optimized for NVIDIA A10')
     else:
         lgb_params.update({
             'device': 'cpu',

@@ -76,24 +76,28 @@ def test_gpu_detection():
     # OpenCL detection
     try:
         import pyopencl as cl
-        platforms = cl.get_platforms()
-        if platforms:
-            for platform in platforms:
-                devices = platform.get_devices(cl.device_type.GPU)
-                if devices:
-                    print(f"✓ OpenCL GPU detected: {len(devices)} device(s) on platform {platform.name}")
-                    
-                    # Test LightGBM GPU support
-                    try:
-                        test_params = {'device': 'gpu', 'gpu_platform_id': 0, 'gpu_device_id': 0}
-                        print("✓ LightGBM GPU parameters accepted")
-                    except Exception as e:
-                        print(f"⚠ LightGBM GPU parameters failed: {e}")
-                    break
+        try:
+            platforms = cl.get_platforms()
+            if platforms:
+                for platform in platforms:
+                    devices = platform.get_devices(cl.device_type.GPU)
+                    if devices:
+                        print(f"✓ OpenCL GPU detected: {len(devices)} device(s) on platform {platform.name}")
+                        
+                        # Test LightGBM GPU support
+                        try:
+                            test_params = {'device': 'gpu', 'gpu_platform_id': 0, 'gpu_device_id': 0}
+                            print("✓ LightGBM GPU parameters accepted")
+                        except Exception as e:
+                            print(f"⚠ LightGBM GPU parameters failed: {e}")
+                        break
+                else:
+                    print("ℹ No OpenCL GPU devices found")
             else:
-                print("ℹ No OpenCL GPU devices found")
-        else:
-            print("ℹ No OpenCL platforms available")
+                print("ℹ No OpenCL platforms available")
+        except Exception as e:
+            print(f"ℹ OpenCL detection failed: {e}")
+            print("  This is normal on some systems and won't affect CUDA GPU usage")
     except ImportError:
         print("ℹ PyOpenCL not available for OpenCL detection")
     
